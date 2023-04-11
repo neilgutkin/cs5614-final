@@ -17,7 +17,7 @@ object Producer {
 
     val producer = new KafkaProducer[String, String](props)
 
-    val topic = "topic_test"
+    val topic = "topic_test1"
     val currentDirectory = new java.io.File(".").getCanonicalPath
     val bufferedSource = Source.fromFile(currentDirectory+"/dataset/datasetLatest.csv")
     val headerLine = bufferedSource.getLines.take(1).next
