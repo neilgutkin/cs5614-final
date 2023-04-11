@@ -19,14 +19,14 @@ object Producer {
 
     val topic = "topic_test"
     val currentDirectory = new java.io.File(".").getCanonicalPath
-    val bufferedSource = Source.fromFile(currentDirectory+"/dataset/datasetEncodedV3.csv")
+    val bufferedSource = Source.fromFile(currentDirectory+"/dataset/datasetLatest.csv")
     val headerLine = bufferedSource.getLines.take(1).next
+    // println(headerLine)
     for (line <- bufferedSource.getLines) {
       // println(line)
       val dict = toDict(line)
       val myJValue = Extraction.decompose(dict)
       val value = compact(render(myJValue))
-      // println(value)
       println(value)
       val message = new ProducerRecord[String, String](topic, "dummykey", value)
       producer.send(message)
@@ -37,23 +37,25 @@ object Producer {
 
   def toDict(line: String):  Map[String, Any] = {
     val arr = line.split(",")
-    val valid = arr(0)
-    val tmpf = arr(1)
-    val dwpf = arr(2)
-    val relh = arr(3)
-    val feel = arr(4)
-    val drct = arr(5)
-    val sped = arr(6)
-    val alti = arr(7)
-    val p01m = arr(8)
-    val vsby = arr(9)
-    val skyc1 = arr(10)
-    val skyl1 = arr(11)
-    val wxcodes = arr(12)
-    val station_encoded = arr(13)
-    val skyc1_encoded = arr(14)
+    val station = arr(0)
+    val valid = arr(1)
+    val tmpf = arr(2)
+    val dwpf = arr(3)
+    val relh = arr(4)
+    val feel = arr(5)
+    val drct = arr(6)
+    val sped = arr(7)
+    val alti = arr(8)
+    val mslp = arr(9)
+    val p01m = arr(10)
+    val vsby = arr(11)
+    val skyc1 = arr(12)
+    val skyl1 = arr(13)
+    val wxcodes = arr(14)
+    val ice_acceretion_1hr = arr(15)
 
     Map(
+      "station" -> station,
       "valid" -> valid,
       "tmpf" -> tmpf,
       "dwpf" -> dwpf,
@@ -62,13 +64,13 @@ object Producer {
       "drct" -> drct,
       "sped" -> sped,
       "alti" -> alti,
+      "mslp" -> mslp,
       "p01m" -> p01m,
       "vsby" -> vsby,
       "skyc1" -> skyc1,
       "skyl1" -> skyl1,
       "wxcodes" -> wxcodes,
-      "station_encoded" -> station_encoded,
-      "skyc1_encoded" -> skyc1_encoded,
+      "ice_acceretion_1hr" -> ice_acceretion_1hr
     )
   }
 }
