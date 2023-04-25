@@ -1,11 +1,9 @@
 import java.util.Properties
-import java.io.File
 import scala.io.Source
-import scala.util.Random
+import java.nio.file.{Path, Paths}
 import org.json4s._
-import org.json4s.jackson.JsonMethods._
-
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
+import org.json4s.jackson.JsonMethods._
 
 object Producer {
   def main(args: Array[String]): Unit = {
@@ -18,19 +16,18 @@ object Producer {
     val producer = new KafkaProducer[String, String](props)
 
     val topic = "topic_test1"
-    val currentDirectory = new java.io.File(".").getCanonicalPath
-    val bufferedSource = Source.fromFile(currentDirectory+"/dataset/datasetLatest.csv")
+    val currentDirectory: Path = Paths.get(System.getProperty("user.dir"))
+    val dataDirectory: Path = Paths.get(currentDirectory.toString(), "/repo/dataset", "datasetLatest.csv")
+    val bufferedSource = Source.fromFile(dataDirectory.toString())
     val headerLine = bufferedSource.getLines.take(1).next
-    // println(headerLine)
     for (line <- bufferedSource.getLines) {
-      // println(line)
       val dict = toDict(line)
       val myJValue = Extraction.decompose(dict)
       val value = compact(render(myJValue))
       println(value)
       val message = new ProducerRecord[String, String](topic, "dummykey", value)
       producer.send(message)
-      Thread.sleep(5000) // adjust the rate at which the data is sent
+      Thread.sleep(1000) // adjust the rate at which the data is sent
     }
     bufferedSource.close
   }
