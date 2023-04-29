@@ -129,7 +129,7 @@ object Main {
       val dfse5 = dfse4.withColumn("station", when(col("station") === "RUT", 4).otherwise(col("station")))
       val dfse6 = dfse5.withColumn("station", when(col("station") === "MPV", 5).otherwise(col("station")))
       val dfse7 = dfse6.withColumn("station", when(col("station") === "VSF", 6).otherwise(col("station")))
-      val dfse8 = dfse7.withColumn("station", when(col("station") === "DOH", 7).otherwise(col("station")))
+      val dfse8 = dfse7.withColumn("station", when(col("station") === "DDH", 7).otherwise(col("station")))
       val dfse9 = dfse8.withColumn("station", when(col("station") === "1V4", 8).otherwise(col("station")))
       val dfse10 = dfse9.withColumn("station", when(col("station") === "BTV", 9).otherwise(col("station")))
       val dfse11 = dfse10.withColumn("station", when(col("station") === "6B0", 10).otherwise(col("station")))
@@ -171,24 +171,36 @@ object Main {
           operatingDF.rdd.map(row => {
             val validTimestamp = row.getAs[Timestamp]("valid")
             val window_start = validTimestamp.getTime / (windowSize * 1000)
-            ((row.getAs[String]("station"), window_start),
+            val window_start_timestamp = if (validTimestamp.getTime >= Timestamp.valueOf("2013-01-01 00:00:00").getTime && validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
+              Timestamp.valueOf("2013-01-01 00:00:00")
+            } else {
+              new Timestamp(window_start * 1000)
+            }
+
+            val prevWeekStart = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
+              Timestamp.valueOf("2013-01-01 00:00:00")
+            } else {
+              new Timestamp(validTimestamp.getTime - (7 * 24 * 60 * 60 * 1000))
+            }
+            val prevWeekEnd = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-02 00:00:00").getTime) {
+              Timestamp.valueOf("2013-01-01 00:00:00")
+            } else {
+              new Timestamp(validTimestamp.getTime - (1 * 24 * 60 * 60 * 1000))
+            }
+            ((row.getAs[String]("station"), window_start_timestamp),
               (row.getAs[Double]("tmpf"),
-                new Timestamp(validTimestamp.getTime - (7 * 24 * 60 * 60 * 1000)),
-                //                new Timestamp(validTimestamp.getTime)))
-                new Timestamp(validTimestamp.getTime - (1 * 24 * 60 * 60 * 1000)
-                )))
+                prevWeekStart,
+                prevWeekEnd
+              ))
           })
         }
         .updateStateByKey(updateFunction)
         .transform { rdd =>
-          rdd.flatMap { case ((station, window), temp_list) =>
+          rdd.flatMap { case ((station, window_start_timestamp), temp_list) =>
             temp_list.map { case (temp, prevWeekStart, prevWeekEnd) =>
-              ((station, window * windowSize * 1000), (temp, prevWeekStart, prevWeekEnd))
+              ((station, window_start_timestamp), (temp, prevWeekStart, prevWeekEnd))
             }
           }
-        }
-        .map { case ((station, windowStart), (temp, prevWeekStart, prevWeekEnd)) =>
-          ((station, new Timestamp(windowStart)), (temp, prevWeekStart, prevWeekEnd))
         }
     }
 
