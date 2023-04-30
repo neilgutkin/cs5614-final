@@ -19,7 +19,7 @@ object Producer {
 
     val topic = "topic_test1"
     val currentDirectory = new java.io.File(".").getCanonicalPath
-    val bufferedSource = Source.fromFile(currentDirectory+"/dataset/currentDataset.csv")
+    val bufferedSource = Source.fromFile(currentDirectory+"/dataset/currentDatasetFinal.csv")
     val headerLine = bufferedSource.getLines.take(1).next
     // println(headerLine)
     for (line <- bufferedSource.getLines) {
@@ -30,7 +30,7 @@ object Producer {
       println(value)
       val message = new ProducerRecord[String, String](topic, "dummykey", value)
       producer.send(message)
-      Thread.sleep(5000) // adjust the rate at which the data is sent
+      Thread.sleep(100) // adjust the rate at which the data is sent
     }
     bufferedSource.close
   }

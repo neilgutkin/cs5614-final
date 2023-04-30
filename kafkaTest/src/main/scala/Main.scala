@@ -7,6 +7,8 @@ import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka010._
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.sql.functions.date_format
+import scala.math.{sqrt, pow}
+
 import scala.math.Ordering.Implicits._
 import scala.math.abs
 import java.time.{Instant, ZoneId, ZonedDateTime}
@@ -22,6 +24,8 @@ import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.streaming.Duration
 import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions._
+
+import scala.collection.mutable
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -85,18 +89,8 @@ object Main {
     // feature Engineering and preprocessing starts here:
 
     def featureEngineering(df_formatted: DataFrame): DataFrame = {
-      //      def average: (Seq[Double] => Double) = seq => seq.sum / seq.size
-      //
-      //
-      //      val averageUDF = udf(average)
-      //
-      //      def standardDeviation: (Seq[Double] => Double) = { values =>
-      //        val mean = values.sum / values.length
-      //        val squaredDiffs = values.map(value => (value - mean) * (value - mean))
-      //        math.sqrt(squaredDiffs.sum / squaredDiffs.length)
-      //      }
-      //
-      //      val stddevUDF = udf(standardDeviation)
+
+      //      Missing value imputation
       val df_new = df_formatted
         .withColumn("mslp", when(col("mslp") === -1, 0).otherwise(col("mslp")))
 
@@ -112,6 +106,7 @@ object Main {
       val df_skyc1 = df_iA
         .withColumn("skyc1", when(col("skyc1") === 'M', "CLR").otherwise(col("skyc1")))
 
+      //    Label Encoding
       val df_skyc1_encoded1 = df_skyc1.withColumn("skyc1", when(col("skyc1") === "CLR", 0).otherwise(col("skyc1")))
       val df_skyc1_encoded2 = df_skyc1_encoded1.withColumn("skyc1", when(col("skyc1") === "VV", 1).otherwise(col("skyc1")))
       val df_skyc1_encoded3 = df_skyc1_encoded2.withColumn("skyc1", when(col("skyc1") === "SCT", 2).otherwise(col("skyc1")))
@@ -129,77 +124,165 @@ object Main {
       val dfse8 = dfse7.withColumn("station", when(col("station") === "DDH", 7).otherwise(col("station")))
       val dfse9 = dfse8.withColumn("station", when(col("station") === "1V4", 8).otherwise(col("station")))
       val dfse10 = dfse9.withColumn("station", when(col("station") === "BTV", 9).otherwise(col("station")))
-      val dfse11 = dfse10.withColumn("station", when(col("station") === "6B0", 10).otherwise(col("station")))
+      var dfse11 = dfse10.withColumn("station", when(col("station") === "6B0", 10).otherwise(col("station")))
 
-      //          dfse11.show(truncate = false)
+      // Normalization
+
+      dfse11 = dfse11.withColumn("tmpf", col("tmpf") / 100)
+      dfse11 = dfse11.withColumn("dwpf", col("dwpf") / 100)
+      dfse11 = dfse11.withColumn("relh", col("relh") / 100)
+      dfse11 = dfse11.withColumn("drct", col("drct") / 100)
+      dfse11 = dfse11.withColumn("sped", col("sped") / 100)
+      dfse11 = dfse11.withColumn("feel", col("feel") / 100)
+      dfse11 = dfse11.withColumn("alti", col("alti") / 100)
+      dfse11 = dfse11.withColumn("vsby", col("vsby") / 100)
+      dfse11 = dfse11.withColumn("skyl1", col("skyl1") / 100)
+      dfse11 = dfse11.withColumn("mslp", col("mslp") / 1000)
+
+//      dfse11.show()
+
       return dfse11
     }
 
 
-    def two_window(): DStream[((String, Timestamp), (Double, Timestamp, Timestamp))] = {
-      val windowSize = 7200 // 2 hours in seconds
-      kafkaStream.map(record => record.value)
-        .transform { rdd =>
-          val df_parsed = rdd.toDF("value")
-            .select(from_json($"value", schema).as("data"))
-            .select(
-              date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"), // <-- example format
-              $"data.station",
-              $"data.tmpf",
-              $"data.dwpf",
-              $"data.relh",
-              $"data.feel",
-              $"data.drct",
-              $"data.sped",
-              $"data.alti",
-              $"data.mslp",
-              $"data.p01m",
-              $"data.vsby",
-              $"data.skyc1",
-              $"data.skyl1",
-              $"data.wxcodes",
-              $"data.ice_acceretion_1hr")
+//    def two_window_old(): DStream[((String, Timestamp), (Double, Timestamp, Timestamp))] = {
+//      val windowSize = 7200 // 2 hours in seconds
+//      kafkaStream.map(record => record.value)
+//        .transform { rdd =>
+//          val df_parsed = rdd.toDF("value")
+//            .select(from_json($"value", schema).as("data"))
+//            .select(
+//              date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"), // <-- example format
+//              $"data.station",
+//              $"data.tmpf",
+//              $"data.dwpf",
+//              $"data.relh",
+//              $"data.feel",
+//              $"data.drct",
+//              $"data.sped",
+//              $"data.alti",
+//              $"data.mslp",
+//              $"data.p01m",
+//              $"data.vsby",
+//              $"data.skyc1",
+//              $"data.skyl1",
+//              $"data.wxcodes",
+//              $"data.ice_acceretion_1hr")
+//
+//          val df_formatted = df_parsed
+//            .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
+//            .withColumn("tmpf", $"tmpf".cast("double"))
+//
+//          val operatingDF = featureEngineering(df_formatted)
+//          operatingDF.rdd.map(row => {
+//            val validTimestamp = row.getAs[Timestamp]("valid")
+//            val window_start = Math.floor(validTimestamp.getTime.toDouble / (windowSize * 1000)).toLong * windowSize * 1000
+//            val window_start_timestamp = if (validTimestamp.getTime >= Timestamp.valueOf("2013-01-01 00:00:00").getTime && validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
+//              Timestamp.valueOf("2013-01-01 00:00:00")
+//            } else {
+//              new Timestamp(window_start)
+//            }
+//
+//            val prevWeekStart = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
+//              Timestamp.valueOf("2013-01-01 00:00:00")
+//            } else {
+//              new Timestamp(validTimestamp.getTime - (7 * 24 * 60 * 60 * 1000))
+//            }
+//            val prevWeekEnd = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-02 00:00:00").getTime) {
+//              Timestamp.valueOf("2013-01-01 00:00:00")
+//            } else {
+//              new Timestamp(validTimestamp.getTime - (1 * 24 * 60 * 60 * 1000))
+//            }
+//            ((row.getAs[String]("station"), window_start_timestamp),
+//              (row.getAs[Double]("tmpf"),
+//                prevWeekStart,
+//                prevWeekEnd
+//              ))
+//          })
+//        }
+//        .updateStateByKey(updateFunction)
+//        .transform { rdd =>
+//          rdd.flatMap { case ((station, window_start_timestamp), temp_list) =>
+//            temp_list.map { case (temp, prevWeekStart, prevWeekEnd) =>
+//              ((station, window_start_timestamp), (temp, prevWeekStart, prevWeekEnd))
+//            }
+//          }
+//        }
+//    }
 
-          val df_formatted = df_parsed
-            .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
-            .withColumn("tmpf", $"tmpf".cast("double"))
+        def two_window(): DStream[((String, Timestamp), (Double, Timestamp, Timestamp))] = {
+          val windowSize = 2 * 60 * 60 // 2 hours in seconds
+          val slideInterval = 15 * 60 // 15 minutes in seconds
+          kafkaStream.map(record => record.value)
+            .transform { rdd =>
+              val df_parsed = rdd.toDF("value")
+                .select(from_json($"value", schema).as("data"))
+                .select(
+                  date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"), // <-- example format
+                  $"data.station",
+                  $"data.tmpf",
+                  $"data.dwpf",
+                  $"data.relh",
+                  $"data.feel",
+                  $"data.drct",
+                  $"data.sped",
+                  $"data.alti",
+                  $"data.mslp",
+                  $"data.p01m",
+                  $"data.vsby",
+                  $"data.skyc1",
+                  $"data.skyl1",
+                  $"data.wxcodes",
+                  $"data.ice_acceretion_1hr")
 
-          val operatingDF = featureEngineering(df_formatted)
-          operatingDF.rdd.map(row => {
-            val validTimestamp = row.getAs[Timestamp]("valid")
-            val window_start = validTimestamp.getTime / (windowSize * 1000)
-            val window_start_timestamp = if (validTimestamp.getTime >= Timestamp.valueOf("2013-01-01 00:00:00").getTime && validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
-              Timestamp.valueOf("2013-01-01 00:00:00")
-            } else {
-              new Timestamp(window_start * 1000)
-            }
+              val df_formatted = df_parsed
+                .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
+                .withColumn("tmpf", $"tmpf".cast("double"))
 
-            val prevWeekStart = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
-              Timestamp.valueOf("2013-01-01 00:00:00")
-            } else {
-              new Timestamp(validTimestamp.getTime - (7 * 24 * 60 * 60 * 1000))
+              val operatingDF = featureEngineering(df_formatted)
+              val windowSpec = Window.partitionBy("station")
+                .orderBy($"valid".cast("timestamp").cast("long"))
+                .rangeBetween(-windowSize, 0)
+
+              val df_windowed = operatingDF
+                .withColumn("window_start", $"valid" - expr(s"INTERVAL $windowSize seconds"))
+                .withColumn("previous_week_start", when(
+                  $"valid" < to_timestamp(lit("2013-01-08 00:00:00")),
+                  to_timestamp(lit("2013-01-01 00:00:00"))
+                ).otherwise($"valid" - expr(s"INTERVAL 7 days")))
+                .withColumn("previous_week_end", when(
+                  $"valid" < to_timestamp(lit("2013-01-02 00:00:00")),
+                  $"valid" - expr(s"INTERVAL 15 minutes")
+                ).otherwise($"valid" - expr(s"INTERVAL 1 days")))
+                .filter(unix_timestamp($"valid") % slideInterval === 0)
+                .withColumn("temps", collect_list($"tmpf").over(windowSpec))
+                .select("station", "window_start", "temps", "previous_week_start", "previous_week_end")
+
+
+                .rdd
+                .flatMap(row => {
+                  val station = row.getAs[String]("station")
+                  val window_start = row.getAs[Timestamp]("window_start")
+                  val prevWeekStart = row.getAs[Timestamp]("previous_week_start")
+                  val prevWeekEnd = row.getAs[Timestamp]("previous_week_end")
+                  row.getAs[mutable.WrappedArray[Double]]("temps").toSeq.map(temp => (
+                    (station, window_start),
+                    (temp, prevWeekStart, prevWeekEnd)
+                  ))
+                })
+
+              df_windowed
+
             }
-            val prevWeekEnd = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-02 00:00:00").getTime) {
-              Timestamp.valueOf("2013-01-01 00:00:00")
-            } else {
-              new Timestamp(validTimestamp.getTime - (1 * 24 * 60 * 60 * 1000))
+            .updateStateByKey(updateFunction)
+            .transform { rdd =>
+              rdd.flatMap { case ((station, window_start_timestamp), temp_list) =>
+                temp_list.map { case (temp, prevWeekStart, prevWeekEnd) =>
+                  ((station, window_start_timestamp), (temp, prevWeekStart, prevWeekEnd))
+                }
+              }
             }
-            ((row.getAs[String]("station"), window_start_timestamp),
-              (row.getAs[Double]("tmpf"),
-                prevWeekStart,
-                prevWeekEnd
-              ))
-          })
         }
-        .updateStateByKey(updateFunction)
-        .transform { rdd =>
-          rdd.flatMap { case ((station, window_start_timestamp), temp_list) =>
-            temp_list.map { case (temp, prevWeekStart, prevWeekEnd) =>
-              ((station, window_start_timestamp), (temp, prevWeekStart, prevWeekEnd))
-            }
-          }
-        }
-    }
 
 
     def seven_window(): DStream[((String, Timestamp, Timestamp), (Double, Double))] = {
@@ -208,7 +291,7 @@ object Main {
           val df_parsed = rdd.toDF("value")
             .select(from_json($"value", schema).as("data"))
             .select(
-              date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"),
+              $"data.valid".cast("timestamp").as("valid"),
               $"data.station",
               $"data.tmpf",
               $"data.dwpf",
@@ -223,41 +306,56 @@ object Main {
               $"data.skyc1",
               $"data.skyl1",
               $"data.wxcodes",
-              $"data.ice_acceretion_1hr")
+              $"data.ice_acceretion_1hr"
+            )
 
           val df_formatted = df_parsed
             .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
-            .withColumn("tmpf", $"tmpf".cast("double"))//
+            .withColumn("tmpf", $"tmpf".cast("double"))
 
           val operatingDF = featureEngineering(df_formatted)
 
-          val windowSize = 7 * 24 * 60 * 60 // 7 days in seconds
-          val slideInterval = 24 * 60 * 60 // 1 day in seconds
-
-          val windowSpec = Window.partitionBy("station")
-            .orderBy($"valid".cast("timestamp").cast("long"))
-            .rangeBetween(-windowSize, 0)
+          val windowSize = "7 days"
+          val slideInterval = "1 day"
+          val startWindowDate = "2013-01-01 00:00:00"
 
           val df_windowed = operatingDF
-            .withColumn("temps", collect_list($"tmpf").over(windowSpec))
             .withColumn("windowStart",
               when(
-                $"valid" >= to_timestamp(lit("2013-01-01 00:00:00")) && $"valid" < to_timestamp(lit("2013-01-08 00:00:00")),
-                to_timestamp(lit("2013-01-01 00:00:00"))
+                $"valid" < to_timestamp(lit("2013-01-08 00:00:00")),
+                to_timestamp(lit(startWindowDate))
               ).otherwise($"valid" - expr(s"INTERVAL $windowSize seconds")))
-
-            .groupBy("station", "windowStart", "valid", "temps")
+            .groupBy(window(date_trunc("hour", $"valid"), windowSize, slideInterval), $"station")
             .agg(
-              expr("AGGREGATE(temps, (0.0D, 0.0D, 0L), (acc, x) -> (acc.col1 + x, acc.col2 + x * x, acc.col3 + 1), acc -> (acc.col1 / acc.col3, SQRT(acc.col2 / acc.col3 - (acc.col1 / acc.col3) * (acc.col1 / acc.col3))))").alias("avgStdTemp")
+              avg("tmpf").alias("avg_temp"),
+              stddev("tmpf").alias("stddev_temp"),
+              min("windowStart").alias("windowStart"),
+              max("valid").alias("valid")
             )
             .rdd
-            .map(row => (
-              (row.getAs[String]("station"), row.getAs[Timestamp]("windowStart"), row.getAs[Timestamp]("valid")),
-              (row.getAs[Row]("avgStdTemp").getDouble(0), row.getAs[Row]("avgStdTemp").getDouble(1))
-            ))
-
+            .flatMap { case row =>
+              val station = row.getAs[String]("station")
+              val windowStart = row.getAs[Timestamp]("windowStart")
+              val valid = row.getAs[Timestamp]("valid")
+              val avgTemp = row.getAs[Double]("avg_temp")
+              val stdDev = row.getAs[Double]("stddev_temp")
+              Seq(((station, windowStart, valid), (avgTemp, stdDev)))
+            }
           df_windowed
         })
+    }
+
+
+    def calculateAvgStdDev(temps: Seq[Double]): (Double, Double) = {
+      val n = temps.length
+      if (n < 2) {
+        // if there is only one element, return its value as both the average and standard deviation
+        (temps.headOption.getOrElse(0.0), 0.0)
+      } else {
+        val avg = temps.sum / n
+        val stdDev = sqrt(temps.map(x => pow(x - avg, 2)).sum / (n - 1))
+        (avg, stdDev)
+      }
     }
 
     val seven_window_rdd = seven_window()
@@ -304,14 +402,14 @@ object Main {
         //      22
         seven_windowStart_date.isEqual(prevWeekStart_date)
     }
-
-
+//
+//
       .map {
         case (station, ((twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd), (valid, sevenWinStart, avgTemp, stddevTemp))) =>
           (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp)
       }
-
-
+//
+//
     filteredRDD.foreachRDD { rdd =>
       println("New filteredRDD batch:")
       rdd.take(10).foreach(println)
