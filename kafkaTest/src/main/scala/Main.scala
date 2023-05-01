@@ -84,11 +84,14 @@ object Main {
       StructField("ice_acceretion_1hr", StringType, true)
     ))
 
-    def updateFunction(newValues: Seq[(Double, Timestamp, Timestamp)], runningCount: Option[List[(Double, Timestamp, Timestamp)]])
-    : Option[List[(Double, Timestamp, Timestamp)]] = {
-      val newList = runningCount.getOrElse(List[(Double, Timestamp, Timestamp)]()) ++ newValues
+    def updateFunction(
+                        newValues: Seq[(Double, Double, Double, Timestamp, Timestamp)],
+                        runningCount: Option[List[(Double, Double, Double, Timestamp, Timestamp)]]
+                      ): Option[List[(Double, Double, Double, Timestamp, Timestamp)]] = {
+      val newList = runningCount.getOrElse(List[(Double, Double, Double, Timestamp, Timestamp)]()) ++ newValues
       Some(newList)
     }
+
 
     // feature Engineering and preprocessing starts here:
 
@@ -214,7 +217,7 @@ object Main {
 //        }
 //    }
 
-        def two_window(): DStream[((String, Timestamp), (Double, Timestamp, Timestamp))] = {
+        def two_window(): DStream[((String, Timestamp), (Double, Double, Double, Timestamp, Timestamp))] = {
           val windowSize = 2 * 60 * 60 // 2 hours in seconds
           val slideInterval = 15 * 60 // 15 minutes in seconds
           kafkaStream.map(record => record.value)
@@ -260,8 +263,9 @@ object Main {
                 ).otherwise($"valid" - expr(s"INTERVAL 1 days")))
                 .filter(unix_timestamp($"valid") % slideInterval === 0)
                 .withColumn("temps", collect_list($"tmpf").over(windowSpec))
-                .select("station", "window_start", "temps", "previous_week_start", "previous_week_end")
-
+                .withColumn("relhs", collect_list($"relh").over(windowSpec))
+                .withColumn("vsbys", collect_list($"vsby").over(windowSpec))
+                .select("station", "window_start", "temps", "relhs", "vsbys", "previous_week_start", "previous_week_end")
 
                 .rdd
                 .flatMap(row => {
@@ -269,10 +273,19 @@ object Main {
                   val window_start = row.getAs[Timestamp]("window_start")
                   val prevWeekStart = row.getAs[Timestamp]("previous_week_start")
                   val prevWeekEnd = row.getAs[Timestamp]("previous_week_end")
-                  row.getAs[mutable.WrappedArray[Double]]("temps").toSeq.map(temp => (
-                    (station, window_start),
-                    (temp, prevWeekStart, prevWeekEnd)
-                  ))
+                  val temps = row.getAs[mutable.WrappedArray[Double]]("temps").toSeq
+                  val relhs = row.getAs[mutable.WrappedArray[Double]]("relhs").toSeq
+                  val vsbys = row.getAs[mutable.WrappedArray[Double]]("vsbys").toSeq
+
+                  // Calculate average values for each window
+                  val temp_avg = if (temps.nonEmpty) temps.sum / temps.length else 0.0
+                  val relh_avg = if (relhs.nonEmpty) relhs.sum / relhs.length else 0.0
+                  val vsby_avg = if (vsbys.nonEmpty) vsbys.sum / vsbys.length else 0.0
+
+                  Seq(
+                    ((station, window_start),
+                      (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd))
+                  )
                 })
 
               df_windowed
@@ -280,9 +293,9 @@ object Main {
             }
             .updateStateByKey(updateFunction)
             .transform { rdd =>
-              rdd.flatMap { case ((station, window_start_timestamp), temp_list) =>
-                temp_list.map { case (temp, prevWeekStart, prevWeekEnd) =>
-                  ((station, window_start_timestamp), (temp, prevWeekStart, prevWeekEnd))
+              rdd.flatMap { case ((station, window_start_timestamp), avg_list) =>
+                avg_list.map { case (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd) =>
+                  ((station, window_start_timestamp), (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd))
                 }
               }
             }
@@ -375,8 +388,8 @@ object Main {
     val two_window_rdd=two_window()
     val transformed_two_RDD = two_window_rdd.transform { rdd =>
       rdd.map {
-        case ((station, two_window_start), (temp, prevWeekStart, prevWeekEnd)) =>
-          (station, (two_window_start, temp, prevWeekStart, prevWeekEnd))
+        case ((station, two_window_start), (temp, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd)) =>
+          (station, (two_window_start, temp, prevWeekStart, prevWeekEnd, relh_avg, vsby_avg))
       }
     }
     //
@@ -398,7 +411,7 @@ object Main {
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     val filteredRDD = joinedRDD.filter {
-      case (_, ((two_window_start, _, prevWeekStart, prevWeekEnd), (valid, seven_windowStart, _, _))) =>
+      case (_, ((two_window_start, _, prevWeekStart, prevWeekEnd, _, _), (valid, seven_windowStart, _, _))) =>
         val seven_windowStart_date = LocalDateTime.ofInstant(seven_windowStart.toInstant, ZoneId.systemDefault()).toLocalDate()
         val prevWeekStart_date = LocalDateTime.ofInstant(prevWeekStart.toInstant, ZoneId.systemDefault()).toLocalDate()
         val prevWeekEnd_date = LocalDateTime.ofInstant(prevWeekEnd.toInstant, ZoneId.systemDefault()).toLocalDate()
@@ -409,8 +422,8 @@ object Main {
 //
 //
       .map {
-        case (station, ((twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd), (valid, sevenWinStart, avgTemp, stddevTemp))) =>
-          (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp)
+        case (station, ((twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, relh_avg, vsby_avg), (valid, sevenWinStart, avgTemp, stddevTemp))) =>
+          (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp,  relh_avg, vsby_avg)
       }
 //
 //
@@ -420,9 +433,9 @@ object Main {
     }
 
     val filteredRDDWithZscore = filteredRDD.map {
-      case (station,twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp) =>
+      case (station,twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp,  relh_avg, vsby_avg) =>
         val zScore = (temp - avgTemp) / stddevTemp
-        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore)
+        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, relh_avg, vsby_avg, avgTemp, stddevTemp, zScore)
     }
 
     filteredRDDWithZscore.foreachRDD { rdd =>
@@ -432,7 +445,7 @@ object Main {
 
 
     val filteredZscoreRDD = filteredRDDWithZscore.filter {
-      case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
+      case (_, _, _, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
     }
 
     filteredZscoreRDD.foreachRDD { rdd =>
