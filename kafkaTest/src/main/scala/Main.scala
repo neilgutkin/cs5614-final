@@ -8,6 +8,10 @@ import org.apache.spark.streaming.kafka010._
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.sql.functions.date_format
 import scala.math.{sqrt, pow}
+import org.apache.spark.sql.functions.{avg, col, window, stddev}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions._
+
 
 import scala.math.Ordering.Implicits._
 import scala.math.abs
@@ -314,30 +318,27 @@ object Main {
 
           val operatingDF = featureEngineering(df_formatted)
 
-          val windowSize = 7 * 24 * 60 * 60 // 7 days in seconds
-          val slideInterval = 24 * 60 * 60 // 1 day in seconds
+          val windowSize = "7 days"
+          val slideInterval = "1 day"
 
-          val windowSpec = Window.partitionBy("station")
-            .orderBy($"valid".cast("timestamp").cast("long"))
-            .rangeBetween(-windowSize, 0)
+          val windowSpec = org.apache.spark.sql.expressions.Window.partitionBy("station")
+            .orderBy($"valid")
+            .rangeBetween(-(86400 * 7), 0)
+
 
           val df_windowed = operatingDF
-            .withColumn("temps", collect_list($"tmpf").over(windowSpec))
-            .withColumn("windowStart",
-              when(
-                $"valid" >= to_timestamp(lit("2013-01-01 00:00:00")) && $"valid" < to_timestamp(lit("2013-01-08 00:00:00")),
-                to_timestamp(lit("2013-01-01 00:00:00"))
-              ).otherwise($"valid" - expr(s"INTERVAL $windowSize seconds")))
-
-            .groupBy("station", "windowStart", "valid", "temps")
-            .agg(
-              expr("AGGREGATE(temps, (0.0D, 0.0D, 0L), (acc, x) -> (acc.col1 + x, acc.col2 + x * x, acc.col3 + 1), acc -> (acc.col1 / acc.col3, SQRT(acc.col2 / acc.col3 - (acc.col1 / acc.col3) * (acc.col1 / acc.col3))))").alias("avgStdTemp")
-            )
+            .withColumn("window", org.apache.spark.sql.functions.window($"valid", windowSize, slideInterval))
+            .groupBy("station", "window")
+            .agg(avg("tmpf").alias("avg_temp"), stddev("tmpf").alias("stddev_temp"))
+            .withColumn("windowStart", $"window.start")
+            .withColumn("windowEnd", $"window.end")
+            .drop("window")
             .rdd
             .map(row => (
-              (row.getAs[String]("station"), row.getAs[Timestamp]("windowStart"), row.getAs[Timestamp]("valid")),
-              (row.getAs[Row]("avgStdTemp").getDouble(0), row.getAs[Row]("avgStdTemp").getDouble(1))
+              (row.getAs[String]("station"), row.getAs[Timestamp]("windowStart"), row.getAs[Timestamp]("windowEnd")),
+              (row.getAs[Double]("avg_temp"), row.getAs[Double]("stddev_temp"))
             ))
+
 
           df_windowed
         })
@@ -387,7 +388,12 @@ object Main {
       rdd.take(10).foreach(println) // Print the first 10 elements
     }
     //
+//    val joinedRDD = transformed_two_RDD.join(transformed_seven_RDD)
     val joinedRDD = transformed_two_RDD.join(transformed_seven_RDD)
+      .map { case (key, (value1, value2)) => ((key, value1, value2), 1) } // add a dummy value of 1 to each tuple
+      .reduceByKey(_ + _) // reduce by key to remove duplicates
+      .map { case ((key, value1, value2), _) => (key, (value1, value2)) } // remove the dummy value from each tuple
+
 
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
@@ -420,24 +426,21 @@ object Main {
     }
 
     filteredRDDWithZscore.foreachRDD { rdd =>
-      println("New z-score calc batch:")
-      rdd.take(10).foreach(println)
-      // Call collect() on the RDD returned by foreachRDD
-      val collected = rdd.collect()
-      // Do something with the collected data
+      println("New filteredRDDWithZscore batch:")
+      rdd.collect().take(10).foreach(println)
     }
-//    val filteredZscoreRDD = filteredRDDWithZscore.filter {
-//      case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
-//    }.map {
-//      case (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore) =>
-//        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore)
-//    }
-//
-//
-//    filteredZscoreRDD.foreachRDD { rdd =>
-//      println("New filteredZscore batch:")
-//      rdd.take(10) // Print the first 10 elements
-//    }
+    val filteredZscoreRDD = filteredRDDWithZscore.filter {
+      case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
+    }.map {
+      case (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore) =>
+        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore)
+    }
+
+
+    filteredZscoreRDD.foreachRDD { rdd =>
+      println("New filteredZscore batch:")
+      rdd.take(10) // Print the first 10 elements
+    }
 
     streamingContext.start()
     streamingContext.awaitTermination()
