@@ -429,18 +429,29 @@ object Main {
       println("New filteredRDDWithZscore batch:")
       rdd.collect().take(10).foreach(println)
     }
+
+
     val filteredZscoreRDD = filteredRDDWithZscore.filter {
       case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
-    }.map {
-      case (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore) =>
-        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore)
     }
-
 
     filteredZscoreRDD.foreachRDD { rdd =>
       println("New filteredZscore batch:")
-      rdd.take(10) // Print the first 10 elements
+      rdd.take(10).foreach(println) // Print the first 10 elements
     }
+//    val filteredZscoreRDD = filteredRDDWithZscore.filter {
+//      case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
+//}
+//      .map {
+//      case (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore) =>
+//        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore)
+//    }
+//
+//
+//    filteredZscoreRDD.foreachRDD { rdd =>
+//      println("New filteredZscore batch:")
+//      rdd.take(10) // Print the first 10 elements
+//    }
 
     streamingContext.start()
     streamingContext.awaitTermination()
