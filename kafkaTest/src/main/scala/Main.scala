@@ -342,8 +342,7 @@ object Main {
           val df_windowed = operatingDF
             .withColumn("window", org.apache.spark.sql.functions.window($"valid", windowSize, slideInterval))
             .groupBy("station", "window")
-            .agg(avg("tmpf").alias("avg_temp"), stddev("tmpf").alias("stddev_temp"))
-            .withColumn("windowStart", $"window.start")
+            .agg(round(avg("tmpf"), 4).alias("avg_temp"), round(stddev("tmpf"), 4).alias("stddev_temp"))            .withColumn("windowStart", $"window.start")
             .withColumn("windowEnd", $"window.end")
             .drop("window")
             .rdd
@@ -378,10 +377,18 @@ object Main {
           (station, (valid, seven_windowStart, avgTemp, stddevTemp))
       }
     }
+//
+//    transformed_seven_RDD.foreachRDD { rdd =>
+//      println("New seven_window_batch")
+//      rdd.take(100).foreach(println) // Print the first 10 elements
+//    }
 
     transformed_seven_RDD.foreachRDD { rdd =>
-      println("New seven_window_batch")
-      rdd.take(100).foreach(println) // Print the first 10 elements
+      println("New stwo_window_batch")
+      println("%-6s |  %-20s |      %-15s |     %-15s|  %-15s".format("Station", "Valid", "SevenWindowStart", "AvgTemp", "StddevTemp"))
+      rdd.take(100).foreach { case (station, (valid, seven_windowStart, avgTemp, stddevTemp)) =>
+        println("%-6s |  %-20s |  %-15s |     %-15s| %-15s".format(station, valid.toString, seven_windowStart.toString, avgTemp.toString, stddevTemp.toString))
+      }
     }
 
 
@@ -396,9 +403,17 @@ object Main {
     //    // Now you can perform any operation on the transformedRDD, for example, print the first 10 elements:
     ////    transformed_two_RDD.print(10)
     //
+//    transformed_two_RDD.foreachRDD { rdd =>
+//      println("New two_window_batch")
+//      rdd.take(10).foreach(println) // Print the first 10 elements
+//    }
+
     transformed_two_RDD.foreachRDD { rdd =>
-      println("New two_window_batch")
-      rdd.take(10).foreach(println) // Print the first 10 elements
+      println("New seven_window_batch12")
+      println("%-6s |  %-20s |      %-15s |     %-15s|  %-15s".format("Station", "2hr_win_start", "temp","Avg_Rel_Humid", "Avg_visibility"))
+      rdd.take(100).foreach { case  (station, (two_window_start, temp, prevWeekStart, prevWeekEnd, relh_avg, vsby_avg)) =>
+        println("%-6s |  %-20s |  %-15s |     %-15s| %-15s".format(station, two_window_start, temp,relh_avg, vsby_avg ))
+      }
     }
     //
 //    val joinedRDD = transformed_two_RDD.join(transformed_seven_RDD)
@@ -427,10 +442,10 @@ object Main {
       }
 //
 //
-    filteredRDD.foreachRDD { rdd =>
-      println("New filteredRDD batch:")
-      rdd.take(10).foreach(println)
-    }
+//    filteredRDD.foreachRDD { rdd =>
+//      println("New filteredRDD batch:")
+//      rdd.take(10).foreach(println)
+//    }
 
     val filteredRDDWithZscore = filteredRDD.map {
       case (station,twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp,  relh_avg, vsby_avg) =>
@@ -439,19 +454,27 @@ object Main {
     }
 
     filteredRDDWithZscore.foreachRDD { rdd =>
-      println("New filteredRDDWithZscore batch:")
-      rdd.collect().take(10).foreach(println)
+      println("New filteredRDDWithZscore_batch")
+      println("%-6s |  %-20s |%-15s | %-20s|  %-20s| %-15s | %-15s    | %-15s | %-15s | %-15s |".format("Station", "2hr_win_start", "temp", "2hr_win_prevWeekStart","2hr_win_prevWeekEnd","Avg_Temp", "Avg_Rel_Humid", "Avg_visibility","StdDevTemp", "zScore"))
+      rdd.take(100).foreach { case (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, relh_avg, vsby_avg, avgTemp, stddevTemp, zScore) =>
+        println("%-6s |  %-20s |%-15s | %-20s| %-20s| %-15s | %-15s    | %-15s | %-15s | %-15s |".format(station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd,avgTemp, relh_avg, vsby_avg, stddevTemp, zScore))
+      }
     }
+
+//    filteredRDDWithZscore.foreachRDD { rdd =>
+//      println("New filteredRDDWithZscore batch:")
+//      rdd.collect().take(10).foreach(println)
+//    }
 
 
     val filteredZscoreRDD = filteredRDDWithZscore.filter {
       case (_, _, _, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
     }
 
-    filteredZscoreRDD.foreachRDD { rdd =>
-      println("New filteredZscore batch:")
-      rdd.take(10).foreach(println) // Print the first 10 elements
-    }
+//    filteredZscoreRDD.foreachRDD { rdd =>
+//      println("New filteredZscore batch:")
+//      rdd.take(10).foreach(println) // Print the first 10 elements
+//    }
 //    val filteredZscoreRDD = filteredRDDWithZscore.filter {
 //      case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
 //}
