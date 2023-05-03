@@ -7,11 +7,12 @@ import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka010._
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.sql.functions.date_format
-import scala.math.{sqrt, pow}
-import org.apache.spark.sql.functions.{avg, col, window, stddev}
-import org.apache.spark.sql.expressions.Window
-import org.apache.spark.sql.functions._
 
+import scala.math.{pow, sqrt}
+import org.apache.spark.sql.functions.{avg, col, stddev, window}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.sql.functions._
 
 import scala.math.Ordering.Implicits._
 import scala.math.abs
@@ -28,8 +29,23 @@ import org.apache.spark.streaming.dstream.DStream
 import org.apache.spark.streaming.Duration
 import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions._
+// import org.apache.spark.ml.feature.{LabeledPoint, StandardScaler, VectorAssembler}
+import org.apache.spark.ml.classification.DecisionTreeClassifier
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.mllib.classification.{SVMModel, SVMWithSGD}
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
+import spire.compat.fractional
+
+import scala.math.Ordered.orderingToOrdered
+
+// import org.apache.spark.ml.classification.DecisionTreeClassifier
+import org.apache.spark.ml.classification.DecisionTreeClassificationModel
+//import org.apache.spark.mllib.linalg.Vectors
+//import org.apache.spark.mllib.tree.IsolationForest
 
 import scala.collection.mutable
+
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -93,7 +109,14 @@ object Main {
     }
 
 
+
+
     // feature Engineering and preprocessing starts here:
+
+    def extractFeatures(data: RDD[((String, Timestamp, Double, Timestamp, Timestamp, Timestamp, Double, Double, Double, Double, Double))]): RDD[LabeledPoint] = {
+      val newData = data.map(data => LabeledPoint(data._11, Vectors.dense(data._3, data._7, data._8, data._9, data._10)))
+      newData.map(lp => LabeledPoint(if (lp.label < -2.0 || lp.label > 2.0) 1.0 else 0.0, lp.features))
+    }
 
     def featureEngineering(df_formatted: DataFrame): DataFrame = {
 
@@ -146,160 +169,94 @@ object Main {
       dfse11 = dfse11.withColumn("skyl1", col("skyl1") / 100)
       dfse11 = dfse11.withColumn("mslp", col("mslp") / 1000)
 
-//      dfse11.show()
+      //      dfse11.show()
 
       return dfse11
     }
 
+    def two_window(): DStream[((String, Timestamp), (Double, Double, Double, Timestamp, Timestamp))] = {
+      val windowSize = 2 * 60 * 60 // 2 hours in seconds
+      val slideInterval = 15 * 60 // 15 minutes in seconds
+      kafkaStream.map(record => record.value)
+        .transform { rdd =>
+          val df_parsed = rdd.toDF("value")
+            .select(from_json($"value", schema).as("data"))
+            .select(
+              date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"), // <-- example format
+              $"data.station",
+              $"data.tmpf",
+              $"data.dwpf",
+              $"data.relh",
+              $"data.feel",
+              $"data.drct",
+              $"data.sped",
+              $"data.alti",
+              $"data.mslp",
+              $"data.p01m",
+              $"data.vsby",
+              $"data.skyc1",
+              $"data.skyl1",
+              $"data.wxcodes",
+              $"data.ice_acceretion_1hr")
 
-//    def two_window_old(): DStream[((String, Timestamp), (Double, Timestamp, Timestamp))] = {
-//      val windowSize = 7200 // 2 hours in seconds
-//      kafkaStream.map(record => record.value)
-//        .transform { rdd =>
-//          val df_parsed = rdd.toDF("value")
-//            .select(from_json($"value", schema).as("data"))
-//            .select(
-//              date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"), // <-- example format
-//              $"data.station",
-//              $"data.tmpf",
-//              $"data.dwpf",
-//              $"data.relh",
-//              $"data.feel",
-//              $"data.drct",
-//              $"data.sped",
-//              $"data.alti",
-//              $"data.mslp",
-//              $"data.p01m",
-//              $"data.vsby",
-//              $"data.skyc1",
-//              $"data.skyl1",
-//              $"data.wxcodes",
-//              $"data.ice_acceretion_1hr")
-//
-//          val df_formatted = df_parsed
-//            .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
-//            .withColumn("tmpf", $"tmpf".cast("double"))
-//
-//          val operatingDF = featureEngineering(df_formatted)
-//          operatingDF.rdd.map(row => {
-//            val validTimestamp = row.getAs[Timestamp]("valid")
-//            val window_start = Math.floor(validTimestamp.getTime.toDouble / (windowSize * 1000)).toLong * windowSize * 1000
-//            val window_start_timestamp = if (validTimestamp.getTime >= Timestamp.valueOf("2013-01-01 00:00:00").getTime && validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
-//              Timestamp.valueOf("2013-01-01 00:00:00")
-//            } else {
-//              new Timestamp(window_start)
-//            }
-//
-//            val prevWeekStart = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-08 00:00:00").getTime) {
-//              Timestamp.valueOf("2013-01-01 00:00:00")
-//            } else {
-//              new Timestamp(validTimestamp.getTime - (7 * 24 * 60 * 60 * 1000))
-//            }
-//            val prevWeekEnd = if (validTimestamp.getTime < Timestamp.valueOf("2013-01-02 00:00:00").getTime) {
-//              Timestamp.valueOf("2013-01-01 00:00:00")
-//            } else {
-//              new Timestamp(validTimestamp.getTime - (1 * 24 * 60 * 60 * 1000))
-//            }
-//            ((row.getAs[String]("station"), window_start_timestamp),
-//              (row.getAs[Double]("tmpf"),
-//                prevWeekStart,
-//                prevWeekEnd
-//              ))
-//          })
-//        }
-//        .updateStateByKey(updateFunction)
-//        .transform { rdd =>
-//          rdd.flatMap { case ((station, window_start_timestamp), temp_list) =>
-//            temp_list.map { case (temp, prevWeekStart, prevWeekEnd) =>
-//              ((station, window_start_timestamp), (temp, prevWeekStart, prevWeekEnd))
-//            }
-//          }
-//        }
-//    }
+          val df_formatted = df_parsed
+            .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
+            .withColumn("tmpf", $"tmpf".cast("double"))
 
-        def two_window(): DStream[((String, Timestamp), (Double, Double, Double, Timestamp, Timestamp))] = {
-          val windowSize = 2 * 60 * 60 // 2 hours in seconds
-          val slideInterval = 15 * 60 // 15 minutes in seconds
-          kafkaStream.map(record => record.value)
-            .transform { rdd =>
-              val df_parsed = rdd.toDF("value")
-                .select(from_json($"value", schema).as("data"))
-                .select(
-                  date_format($"data.valid", "yyyy-MM-dd HH:mm:ss").as("valid"), // <-- example format
-                  $"data.station",
-                  $"data.tmpf",
-                  $"data.dwpf",
-                  $"data.relh",
-                  $"data.feel",
-                  $"data.drct",
-                  $"data.sped",
-                  $"data.alti",
-                  $"data.mslp",
-                  $"data.p01m",
-                  $"data.vsby",
-                  $"data.skyc1",
-                  $"data.skyl1",
-                  $"data.wxcodes",
-                  $"data.ice_acceretion_1hr")
+          val operatingDF = featureEngineering(df_formatted)
+          val windowSpec = Window.partitionBy("station")
+            .orderBy($"valid".cast("timestamp").cast("long"))
+            .rangeBetween(-windowSize, 0)
 
-              val df_formatted = df_parsed
-                .withColumn("valid", to_timestamp($"valid", "yyyy-MM-dd HH:mm:ss"))
-                .withColumn("tmpf", $"tmpf".cast("double"))
+          val df_windowed = operatingDF
+            .withColumn("window_start", $"valid" - expr(s"INTERVAL $windowSize seconds"))
+            .withColumn("previous_week_start", when(
+              $"valid" < to_timestamp(lit("2013-01-08 00:00:00")),
+              to_timestamp(lit("2013-01-01 00:00:00"))
+            ).otherwise($"valid" - expr(s"INTERVAL 7 days")))
+            .withColumn("previous_week_end", when(
+              $"valid" < to_timestamp(lit("2013-01-02 00:00:00")),
+              $"valid" - expr(s"INTERVAL 15 minutes")
+            ).otherwise($"valid" - expr(s"INTERVAL 1 days")))
+            .filter(unix_timestamp($"valid") % slideInterval === 0)
+            .withColumn("temps", collect_list($"tmpf").over(windowSpec))
+            .withColumn("relhs", collect_list($"relh").over(windowSpec))
+            .withColumn("vsbys", collect_list($"vsby").over(windowSpec))
+            .select("station", "window_start", "temps", "relhs", "vsbys", "previous_week_start", "previous_week_end")
 
-              val operatingDF = featureEngineering(df_formatted)
-              val windowSpec = Window.partitionBy("station")
-                .orderBy($"valid".cast("timestamp").cast("long"))
-                .rangeBetween(-windowSize, 0)
+            .rdd
+            .flatMap(row => {
+              val station = row.getAs[String]("station")
+              val window_start = row.getAs[Timestamp]("window_start")
+              val prevWeekStart = row.getAs[Timestamp]("previous_week_start")
+              val prevWeekEnd = row.getAs[Timestamp]("previous_week_end")
+              val temps = row.getAs[mutable.WrappedArray[Double]]("temps").toSeq
+              val relhs = row.getAs[mutable.WrappedArray[Double]]("relhs").toSeq
+              val vsbys = row.getAs[mutable.WrappedArray[Double]]("vsbys").toSeq
 
-              val df_windowed = operatingDF
-                .withColumn("window_start", $"valid" - expr(s"INTERVAL $windowSize seconds"))
-                .withColumn("previous_week_start", when(
-                  $"valid" < to_timestamp(lit("2013-01-08 00:00:00")),
-                  to_timestamp(lit("2013-01-01 00:00:00"))
-                ).otherwise($"valid" - expr(s"INTERVAL 7 days")))
-                .withColumn("previous_week_end", when(
-                  $"valid" < to_timestamp(lit("2013-01-02 00:00:00")),
-                  $"valid" - expr(s"INTERVAL 15 minutes")
-                ).otherwise($"valid" - expr(s"INTERVAL 1 days")))
-                .filter(unix_timestamp($"valid") % slideInterval === 0)
-                .withColumn("temps", collect_list($"tmpf").over(windowSpec))
-                .withColumn("relhs", collect_list($"relh").over(windowSpec))
-                .withColumn("vsbys", collect_list($"vsby").over(windowSpec))
-                .select("station", "window_start", "temps", "relhs", "vsbys", "previous_week_start", "previous_week_end")
+              // Calculate average values for each window
+              val temp_avg = if (temps.nonEmpty) temps.sum / temps.length else 0.0
+              val relh_avg = if (relhs.nonEmpty) relhs.sum / relhs.length else 0.0
+              val vsby_avg = if (vsbys.nonEmpty) vsbys.sum / vsbys.length else 0.0
 
-                .rdd
-                .flatMap(row => {
-                  val station = row.getAs[String]("station")
-                  val window_start = row.getAs[Timestamp]("window_start")
-                  val prevWeekStart = row.getAs[Timestamp]("previous_week_start")
-                  val prevWeekEnd = row.getAs[Timestamp]("previous_week_end")
-                  val temps = row.getAs[mutable.WrappedArray[Double]]("temps").toSeq
-                  val relhs = row.getAs[mutable.WrappedArray[Double]]("relhs").toSeq
-                  val vsbys = row.getAs[mutable.WrappedArray[Double]]("vsbys").toSeq
+              Seq(
+                ((station, window_start),
+                  (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd))
+              )
+            })
 
-                  // Calculate average values for each window
-                  val temp_avg = if (temps.nonEmpty) temps.sum / temps.length else 0.0
-                  val relh_avg = if (relhs.nonEmpty) relhs.sum / relhs.length else 0.0
-                  val vsby_avg = if (vsbys.nonEmpty) vsbys.sum / vsbys.length else 0.0
+          df_windowed
 
-                  Seq(
-                    ((station, window_start),
-                      (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd))
-                  )
-                })
-
-              df_windowed
-
-            }
-            .updateStateByKey(updateFunction)
-            .transform { rdd =>
-              rdd.flatMap { case ((station, window_start_timestamp), avg_list) =>
-                avg_list.map { case (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd) =>
-                  ((station, window_start_timestamp), (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd))
-                }
-              }
-            }
         }
+        .updateStateByKey(updateFunction)
+        .transform { rdd =>
+          rdd.flatMap { case ((station, window_start_timestamp), avg_list) =>
+            avg_list.map { case (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd) =>
+              ((station, window_start_timestamp), (temp_avg, relh_avg, vsby_avg, prevWeekStart, prevWeekEnd))
+            }
+          }
+        }
+    }
 
 
     def seven_window(): DStream[((String, Timestamp, Timestamp), (Double, Double))] = {
@@ -377,11 +334,11 @@ object Main {
           (station, (valid, seven_windowStart, avgTemp, stddevTemp))
       }
     }
-//
-//    transformed_seven_RDD.foreachRDD { rdd =>
-//      println("New seven_window_batch")
-//      rdd.take(100).foreach(println) // Print the first 10 elements
-//    }
+    //
+    //    transformed_seven_RDD.foreachRDD { rdd =>
+    //      println("New seven_window_batch")
+    //      rdd.take(100).foreach(println) // Print the first 10 elements
+    //    }
 
     transformed_seven_RDD.foreachRDD { rdd =>
       println("New stwo_window_batch")
@@ -403,10 +360,10 @@ object Main {
     //    // Now you can perform any operation on the transformedRDD, for example, print the first 10 elements:
     ////    transformed_two_RDD.print(10)
     //
-//    transformed_two_RDD.foreachRDD { rdd =>
-//      println("New two_window_batch")
-//      rdd.take(10).foreach(println) // Print the first 10 elements
-//    }
+    //    transformed_two_RDD.foreachRDD { rdd =>
+    //      println("New two_window_batch")
+    //      rdd.take(10).foreach(println) // Print the first 10 elements
+    //    }
 
     transformed_two_RDD.foreachRDD { rdd =>
       println("New seven_window_batch12")
@@ -416,7 +373,7 @@ object Main {
       }
     }
     //
-//    val joinedRDD = transformed_two_RDD.join(transformed_seven_RDD)
+    //    val joinedRDD = transformed_two_RDD.join(transformed_seven_RDD)
     val joinedRDD = transformed_two_RDD.join(transformed_seven_RDD)
       .map { case (key, (value1, value2)) => ((key, value1, value2), 1) } // add a dummy value of 1 to each tuple
       .reduceByKey(_ + _) // reduce by key to remove duplicates
@@ -434,18 +391,18 @@ object Main {
         //      22
         seven_windowStart_date.isEqual(prevWeekStart_date)
     }
-//
-//
+      //
+      //
       .map {
         case (station, ((twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, relh_avg, vsby_avg), (valid, sevenWinStart, avgTemp, stddevTemp))) =>
           (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp,  relh_avg, vsby_avg)
       }
-//
-//
-//    filteredRDD.foreachRDD { rdd =>
-//      println("New filteredRDD batch:")
-//      rdd.take(10).foreach(println)
-//    }
+    //
+    //
+    //    filteredRDD.foreachRDD { rdd =>
+    //      println("New filteredRDD batch:")
+    //      rdd.take(10).foreach(println)
+    //    }
 
     val filteredRDDWithZscore = filteredRDD.map {
       case (station,twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp,  relh_avg, vsby_avg) =>
@@ -461,33 +418,69 @@ object Main {
       }
     }
 
-//    filteredRDDWithZscore.foreachRDD { rdd =>
-//      println("New filteredRDDWithZscore batch:")
-//      rdd.collect().take(10).foreach(println)
-//    }
+    //    filteredRDDWithZscore.foreachRDD { rdd =>
+    //      println("New filteredRDDWithZscore batch:")
+    //      rdd.collect().take(10).foreach(println)
+    //    }
 
 
     val filteredZscoreRDD = filteredRDDWithZscore.filter {
       case (_, _, _, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
     }
 
-//    filteredZscoreRDD.foreachRDD { rdd =>
-//      println("New filteredZscore batch:")
-//      rdd.take(10).foreach(println) // Print the first 10 elements
-//    }
-//    val filteredZscoreRDD = filteredRDDWithZscore.filter {
-//      case (_, _, _, _, _, _, _, _, zScore) => !zScore.isNaN && !zScore.isInfinite
-//}
-//      .map {
-//      case (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore) =>
-//        (station, twoWinStart, temp, twoWinPrevWeekStart, twoWinPrevWeekEnd, sevenWinStart, avgTemp, stddevTemp, zScore)
-//    }
-//
-//
-//    filteredZscoreRDD.foreachRDD { rdd =>
-//      println("New filteredZscore batch:")
-//      rdd.take(10) // Print the first 10 elements
-//    }
+    filteredZscoreRDD.foreachRDD { rdd =>
+      println("New filteredRDDWithZscore batch:")
+      rdd.collect().take(10).foreach(println)
+    }
+
+    def classifyPoints(data: RDD[LabeledPoint], svmModel: SVMModel, threshold: Double): RDD[(Double, Double, Double, Double, Double, Double)] = {
+      val scoreAndLabels = data.map { point =>
+        val score = svmModel.predict(point.features)
+        (score, point.label)
+      }
+      val metrics = new BinaryClassificationMetrics(scoreAndLabels)
+      val auROC = metrics.areaUnderROC()
+      println("AUROC is: ", auROC)
+
+      data.map(data => {
+        val distanceFromBoundary = svmModel.predict(data.features)
+        println(distanceFromBoundary)
+        (data, distanceFromBoundary)
+      }).filter(_._2 > threshold).map(_._1).map(data => (data.label, data.features(0), data.features(1), data.features(2), data.features(3), data.features(4)))
+    }
+
+    var count = 1
+    val svmWithSGD = new SVMWithSGD()
+    svmWithSGD.optimizer.setNumIterations(100)
+    svmWithSGD.optimizer.setRegParam(0.1)
+    var svmmodels: SVMModel = null
+    var flag: Boolean = false
+    val SVMModel = filteredZscoreRDD.foreachRDD(rdd => {
+      print("RDD Count: ", rdd.count())
+      if (rdd.count() > 4) {
+        flag = true
+      }
+      if (flag) {
+        val splits = rdd.randomSplit(Array(0.6, 0.4), seed = 11L)
+        val training = splits(0).cache()
+        val test = splits(1)
+
+        svmmodels = svmWithSGD.run(extractFeatures(training))
+
+        val classifiedData = classifyPoints(extractFeatures(test), svmmodels, 0.0)
+        test.take(10).foreach {
+          case (_, _, _, _, _, _, _, _, _, _, zScore) =>
+            println("|%-15s |".format(zScore))
+        }
+        classifiedData.take(10).foreach(println)
+        classifiedData.take(10).foreach(rdd => {
+          if(rdd._1 == 1.0) {
+            test.saveAsTextFile("AnomalyList" + count.toString + ".txt")
+            count += 1
+          }
+        })
+      }
+    })
 
     streamingContext.start()
     streamingContext.awaitTermination()
