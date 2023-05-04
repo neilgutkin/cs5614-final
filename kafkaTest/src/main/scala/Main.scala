@@ -432,6 +432,8 @@ object Main {
       println("New filteredRDDWithZscore batch:")
       rdd.collect().take(10).foreach(println)
     }
+    
+    // Supervised Learning starts here
 
     def classifyPoints(data: RDD[LabeledPoint], svmModel: SVMModel, threshold: Double): RDD[(Double, Double, Double, Double, Double, Double)] = {
       val scoreAndLabels = data.map { point =>
