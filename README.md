@@ -9,7 +9,7 @@ outlined are
 4. (Supervised) SVM
 
 # 2. Dataset
-Please Download the dataset ```dataset.zip``` from the link [here](https://drive.google.com/file/d/1F-y6uGPsqYKT8SugCivMT1efaJV79iKJ/view?usp=share_link).
+Please Download the dataset ```currentDatasetFinal.zip``` from the link [here](https://github.com/neilgutkin/cs5614-final/tree/main/dataset).
 Extract the dataset and place it in the ```/dataset``` directory.
 
 
