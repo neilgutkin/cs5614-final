@@ -1,11 +1,14 @@
-name := "Producer"
+ThisBuild / version := "0.1.0-SNAPSHOT"
+ThisBuild / scalaVersion := "2.12.10"
 
-version := "1.0"
-
-scalaVersion := "2.12.10"
-resolvers += "jitpack" at "https://jitpack.io"
-libraryDependencies ++= Seq(
-  "org.apache.kafka" % "kafka-clients" % "2.8.0",
-  "org.apache.spark" %% "spark-sql-kafka-0-10" % "3.1.1",
-  "org.json4s" %% "json4s-jackson" % "3.6.11"
-)
+lazy val root = (project in file("."))
+  .settings(
+    name := "bdeProject",
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-core" % "3.2.1",
+      "org.apache.spark" %% "spark-sql" % "3.2.1",
+      "org.apache.spark" %% "spark-mllib" % "3.2.1",
+      "org.apache.spark" %% "spark-streaming" % "3.2.1",
+      "org.apache.spark" %% "spark-streaming-kafka-0-10" % "3.2.1",
+      "org.apache.kafka" % "kafka-clients" % "2.8.1")
+  )
