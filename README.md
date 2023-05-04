@@ -3,10 +3,10 @@
 # 1. Introduction
 This repository holds all the code needed to perform our final project. The sections that will be
 outlined are
-2. Dataset
-3. Environment Setup
-4. Unsupervised K-Means
-5. (Supervised) SVM
+1. Dataset
+2. Environment Setup
+3. Unsupervised K-Means
+4. (Supervised) SVM
 
 # 2. Dataset
 Please Download the dataset ```dataset.zip``` from the link [here](https://drive.google.com/file/d/1F-y6uGPsqYKT8SugCivMT1efaJV79iKJ/view?usp=share_link).
